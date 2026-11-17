@@ -1,0 +1,6 @@
+{
+  "name": "Campus Market",
+  "description": "Verified student marketplace for buying and selling campus essentials safely in GHS.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

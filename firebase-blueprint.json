@@ -1,0 +1,172 @@
+{
+  "entities": {
+    "UserPublic": {
+      "title": "UserPublic",
+      "description": "Publicly visible campus user profile without PII such as email.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Firebase Auth UID matching document ID."
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 60,
+          "description": "Student display name."
+        },
+        "campus": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 80,
+          "description": "Campus or hall/faculty label."
+        },
+        "role": {
+          "type": "string",
+          "enum": ["student", "admin"],
+          "description": "Account role; client creation must only allow 'student'."
+        },
+        "banned": {
+          "type": "boolean",
+          "description": "Whether account is suspended; client creation must set false."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of account creation."
+        }
+      },
+      "required": ["uid", "displayName", "role", "banned", "createdAt"]
+    },
+    "UserPrivate": {
+      "title": "UserPrivate",
+      "description": "Owner-only private account data containing verified school email.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Firebase Auth UID matching parent user document."
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "minLength": 5,
+          "maxLength": 254,
+          "description": "Verified school email address."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of private record creation."
+        }
+      },
+      "required": ["uid", "email", "createdAt"]
+    },
+    "Listing": {
+      "title": "Listing",
+      "description": "Marketplace item listing created by a verified student seller.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Document ID of the listing."
+        },
+        "sellerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "UID of the student who created the listing."
+        },
+        "sellerName": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 60,
+          "description": "Display name of the seller at creation/update time."
+        },
+        "title": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 100,
+          "description": "Sanitized item title."
+        },
+        "description": {
+          "type": "string",
+          "minLength": 10,
+          "maxLength": 2000,
+          "description": "Sanitized item description."
+        },
+        "pricePesewas": {
+          "type": "integer",
+          "description": "Whole pesewas (1 GHS = 100 pesewas), range 100 to 100000000."
+        },
+        "category": {
+          "type": "string",
+          "enum": ["textbooks", "electronics", "hostel_furniture", "clothing", "services", "other"],
+          "description": "Marketplace item category."
+        },
+        "condition": {
+          "type": "string",
+          "enum": ["new", "like_new", "good", "fair"],
+          "description": "Item physical condition."
+        },
+        "images": {
+          "type": "array",
+          "description": "1 to 5 HTTPS image URLs stored in Firebase Storage."
+        },
+        "status": {
+          "type": "string",
+          "enum": ["active", "reserved", "sold", "removed"],
+          "description": "Lifecycle status of the listing."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server last-modified timestamp."
+        }
+      },
+      "required": [
+        "id",
+        "sellerId",
+        "sellerName",
+        "title",
+        "description",
+        "pricePesewas",
+        "category",
+        "condition",
+        "images",
+        "status",
+        "createdAt",
+        "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserPublic" },
+      "description": "Public student profile documents indexed by Firebase Auth UID."
+    },
+    "/users/{userId}/private/{docId}": {
+      "schema": { "$ref": "#/entities/UserPrivate" },
+      "description": "Owner-only PII subcollection storing verified school email at docId 'info'."
+    },
+    "/listings/{listingId}": {
+      "schema": { "$ref": "#/entities/Listing" },
+      "description": "Student marketplace item listings."
+    }
+  }
+}

@@ -1,0 +1,34 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+    // Deny all by default
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+
+    function isVerifiedUser() {
+      return request.auth != null
+        && request.auth.token.email_verified == true;
+    }
+
+    function isValidListingId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    // Listing images: 1-5MB JPEG, PNG, or WebP uploaded strictly by the owner
+    match /listings/{userId}/{listingId}/{fileName} {
+      allow read: if isVerifiedUser();
+      allow create, update: if isVerifiedUser()
+        && request.auth.uid == userId
+        && isValidListingId(listingId)
+        && fileName.size() >= 1 && fileName.size() <= 180
+        && request.resource != null
+        && request.resource.size > 0
+        && request.resource.size <= 5 * 1024 * 1024
+        && request.resource.contentType.matches('image/(jpeg|png|webp)');
+      allow delete: if isVerifiedUser()
+        && request.auth.uid == userId;
+    }
+  }
+}
