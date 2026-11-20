@@ -95,13 +95,15 @@ export function ListingFormPage() {
     setSubmitting(true);
     setUploadPercent(0);
 
-    const sellerName = profile?.displayName || user.displayName || 'Student Seller';
+    const sellerName = profile?.displayName || user.displayName || 'Campus Seller';
+    const sellerVerifiedStudent = Boolean(profile?.verifiedStudent);
 
     try {
       if (isEditMode && id) {
         await updateListing({
           uid: user.uid,
           sellerName,
+          sellerVerifiedStudent,
           listingId: id,
           values: { title, description, priceGhs, category, condition },
           existingImages,
@@ -114,6 +116,7 @@ export function ListingFormPage() {
         const createdId = await createListing({
           uid: user.uid,
           sellerName,
+          sellerVerifiedStudent,
           values: { title, description, priceGhs, category, condition },
           files: newFiles,
           onProgress: setUploadPercent,

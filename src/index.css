@@ -30,3 +30,19 @@
     scroll-behavior: auto !important;
   }
 }
+
+@page {
+  size: auto;
+  margin: 10mm;
+}
+
+@media print {
+  html,
+  body {
+    background-color: #ffffff !important;
+    color: #09090b !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+}
+

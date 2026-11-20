@@ -2,11 +2,14 @@ import {
   collection,
   doc,
   getDoc,
+  getDocs,
+  limit,
   onSnapshot,
   orderBy,
   query,
   serverTimestamp,
   setDoc,
+  Timestamp,
   updateDoc,
   where,
   type DocumentData,
@@ -14,15 +17,25 @@ import {
 } from 'firebase/firestore';
 import { getDownloadURL, ref, uploadBytesResumable } from 'firebase/storage';
 import { db, handleFirestoreError, OperationType, storage } from '../lib/firebase';
-import { validateImageFiles, validateListingForm } from '../lib/listingValidation';
-import type { Listing, ListingFormValues, ListingStatus } from '../types/marketplace';
+import {
+  isValidFirestoreId,
+  validateImageFiles,
+  validateListingForm,
+} from '../lib/listingValidation';
+import type {
+  Listing,
+  ListingCategory,
+  ListingFormValues,
+  ListingStatus,
+} from '../types/marketplace';
 
 function mapListingDoc(snapshot: QueryDocumentSnapshot<DocumentData> | { id: string; data: () => DocumentData }): Listing {
   const data = snapshot.data();
   return {
     id: String(data.id || snapshot.id),
     sellerId: String(data.sellerId || ''),
-    sellerName: String(data.sellerName || 'Student'),
+    sellerName: String(data.sellerName || 'Seller'),
+    sellerVerifiedStudent: Boolean(data.sellerVerifiedStudent),
     title: String(data.title || ''),
     description: String(data.description || ''),
     pricePesewas: Number(data.pricePesewas || 0),
@@ -101,6 +114,61 @@ export async function getListingById(listingId: string): Promise<Listing | null>
   }
 }
 
+export async function getCategoryListingsLast30Days(
+  category: ListingCategory,
+  days = 30
+): Promise<Listing[]> {
+  const path = 'listings';
+  const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+  const q = query(
+    collection(db, path),
+    where('status', '==', 'active'),
+    where('category', '==', category),
+    where('createdAt', '>=', Timestamp.fromDate(cutoff)),
+    orderBy('createdAt', 'desc'),
+    limit(250)
+  );
+
+  try {
+    const snapshot = await getDocs(q);
+    return snapshot.docs.map((d) => mapListingDoc(d));
+  } catch (error) {
+    handleFirestoreError(error, OperationType.LIST, path);
+  }
+}
+
+export async function getActiveListingsBySeller(
+  sellerId: string,
+  maxItems = 50
+): Promise<Listing[]> {
+  if (!isValidFirestoreId(sellerId)) {
+    return [];
+  }
+
+  const path = 'listings';
+  // Two equality filters without orderBy use automatic single-field index merging
+  // and satisfy Firestore allow-list rules (status == 'active') for any verified buyer.
+  const q = query(
+    collection(db, path),
+    where('status', '==', 'active'),
+    where('sellerId', '==', sellerId),
+    limit(maxItems)
+  );
+
+  try {
+    const snapshot = await getDocs(q);
+    return snapshot.docs
+      .map((d) => mapListingDoc(d))
+      .sort((a, b) => {
+        const timeA = a.createdAt ? a.createdAt.getTime() : 0;
+        const timeB = b.createdAt ? b.createdAt.getTime() : 0;
+        return timeB - timeA;
+      });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.LIST, path);
+  }
+}
+
 async function uploadListingImages(
   uid: string,
   listingId: string,
@@ -143,6 +211,7 @@ async function uploadListingImages(
 export async function createListing(params: {
   uid: string;
   sellerName: string;
+  sellerVerifiedStudent?: boolean;
   values: ListingFormValues;
   files: File[];
   onProgress?: (percent: number) => void;
@@ -172,7 +241,8 @@ export async function createListing(params: {
     await setDoc(listingRef, {
       id: listingId,
       sellerId: params.uid,
-      sellerName: params.sellerName.trim().slice(0, 60) || 'Student Seller',
+      sellerName: params.sellerName.trim().slice(0, 60) || 'Campus Seller',
+      ...(params.sellerVerifiedStudent ? { sellerVerifiedStudent: true } : {}),
       title: validation.payload.title,
       description: validation.payload.description,
       pricePesewas: validation.payload.pricePesewas,
@@ -192,6 +262,7 @@ export async function createListing(params: {
 export async function updateListing(params: {
   uid: string;
   sellerName: string;
+  sellerVerifiedStudent?: boolean;
   listingId: string;
   values: ListingFormValues;
   existingImages: string[];
@@ -222,7 +293,8 @@ export async function updateListing(params: {
   const path = `listings/${params.listingId}`;
   try {
     await updateDoc(doc(db, 'listings', params.listingId), {
-      sellerName: params.sellerName.trim().slice(0, 60) || 'Student Seller',
+      sellerName: params.sellerName.trim().slice(0, 60) || 'Campus Seller',
+      sellerVerifiedStudent: Boolean(params.sellerVerifiedStudent),
       title: validation.payload.title,
       description: validation.payload.description,
       pricePesewas: validation.payload.pricePesewas,

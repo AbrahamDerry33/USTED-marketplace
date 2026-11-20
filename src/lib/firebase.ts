@@ -1,21 +1,48 @@
-import { initializeApp } from 'firebase/app';
+import { getApp, getApps, initializeApp } from 'firebase/app';
 import { initializeAppCheck, ReCaptchaV3Provider } from 'firebase/app-check';
 import { connectAuthEmulator, getAuth } from 'firebase/auth';
 import {
   connectFirestoreEmulator,
   doc,
+  enableNetwork,
   getDocFromServer,
   getFirestore,
+  initializeFirestore,
+  type Firestore,
 } from 'firebase/firestore';
+import { connectFunctionsEmulator, getFunctions } from 'firebase/functions';
 import { connectStorageEmulator, getStorage } from 'firebase/storage';
 import firebaseConfig from '../../firebase-applet-config.json';
 
-const app = initializeApp(firebaseConfig);
+const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
 
-// CRITICAL: Pass firestoreDatabaseId explicitly for AI Studio Enterprise Firestore
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+// CRITICAL: Pass firestoreDatabaseId explicitly for AI Studio Enterprise Firestore.
+// Force long-polling in browser runtimes so buffering proxies, campus firewalls,
+// antivirus SSL inspection, or iframe middleboxes do not stall WebChannel streams
+// into a 10-second offline timeout.
+function createFirestoreInstance(): Firestore {
+  if (typeof window === 'undefined') {
+    return getFirestore(app, firebaseConfig.firestoreDatabaseId);
+  }
+
+  try {
+    return initializeFirestore(
+      app,
+      {
+        experimentalForceLongPolling: true,
+        experimentalLongPollingOptions: { timeoutSeconds: 20 },
+      },
+      firebaseConfig.firestoreDatabaseId
+    );
+  } catch {
+    return getFirestore(app, firebaseConfig.firestoreDatabaseId);
+  }
+}
+
+export const db = createFirestoreInstance();
 export const auth = getAuth(app);
 export const storage = getStorage(app);
+export const functions = getFunctions(app);
 
 // Initialize App Check when a reCAPTCHA site key is configured
 const recaptchaKey =
@@ -34,6 +61,7 @@ if (import.meta.env.VITE_USE_EMULATORS === 'true') {
   connectAuthEmulator(auth, 'http://127.0.0.1:9099', { disableWarnings: true });
   connectFirestoreEmulator(db, '127.0.0.1', 8080);
   connectStorageEmulator(storage, '127.0.0.1', 9199);
+  connectFunctionsEmulator(functions, '127.0.0.1', 5001);
 }
 
 export enum OperationType {
@@ -88,14 +116,38 @@ export function handleFirestoreError(
   throw new Error(JSON.stringify(errInfo));
 }
 
+function isOfflineError(error: unknown): boolean {
+  return error instanceof Error && error.message.toLowerCase().includes('the client is offline');
+}
+
 export async function testConnection(): Promise<void> {
   try {
     await getDocFromServer(doc(db, 'test', 'connection'));
   } catch (error) {
-    if (error instanceof Error && error.message.includes('the client is offline')) {
-      console.error('Please check your Firebase configuration.');
+    if (!isOfflineError(error)) {
+      return;
+    }
+
+    // Retry once after explicitly re-enabling network in case the initial handshake blipped
+    try {
+      await enableNetwork(db);
+      await getDocFromServer(doc(db, 'test', 'connection'));
+    } catch (retryError) {
+      if (isOfflineError(retryError)) {
+        console.error('Please check your Firebase configuration.');
+      }
     }
   }
 }
 
-void testConnection();
+if (typeof window !== 'undefined' && typeof navigator !== 'undefined' && navigator.onLine === false) {
+  window.addEventListener(
+    'online',
+    () => {
+      void testConnection();
+    },
+    { once: true }
+  );
+} else {
+  void testConnection();
+}

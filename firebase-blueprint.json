@@ -24,6 +24,10 @@
           "maxLength": 80,
           "description": "Campus or hall/faculty label."
         },
+        "verifiedStudent": {
+          "type": "boolean",
+          "description": "Optional non-blocking Verified Student badge awarded when the user's verified email ends with a recognized academic domain (.edu or .edu.gh)."
+        },
         "role": {
           "type": "string",
           "enum": ["student", "admin"],
@@ -43,7 +47,7 @@
     },
     "UserPrivate": {
       "title": "UserPrivate",
-      "description": "Owner-only private account data containing verified school email.",
+      "description": "Owner-only private account data containing verified email.",
       "type": "object",
       "properties": {
         "uid": {
@@ -58,7 +62,7 @@
           "format": "email",
           "minLength": 5,
           "maxLength": 254,
-          "description": "Verified school email address."
+          "description": "Verified account email address."
         },
         "createdAt": {
           "type": "string",
@@ -67,6 +71,119 @@
         }
       },
       "required": ["uid", "email", "createdAt"]
+    },
+    "Favorite": {
+      "title": "Favorite",
+      "description": "Owner-only Saved Items bookmark record linking a verified student to a bookmarked marketplace listing, synced across devices via Firestore.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Firebase Auth UID matching parent user document."
+        },
+        "listingId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Bookmarked listing document ID matching this favorite document ID."
+        },
+        "savedTitle": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100,
+          "description": "Optional snapshot of the listing title at bookmark time so removed items remain identifiable."
+        },
+        "savedPricePesewas": {
+          "type": "integer",
+          "description": "Optional snapshot of the listing price in whole pesewas (100 to 100000000) for price-drop detection."
+        },
+        "savedCategory": {
+          "type": "string",
+          "enum": ["textbooks", "electronics", "hostel_furniture", "dorm_essentials", "clothing", "services", "other"],
+          "description": "Optional snapshot of the listing category at bookmark time."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the listing was bookmarked to Saved Items."
+        }
+      },
+      "required": ["userId", "listingId", "createdAt"]
+    },
+    "SellerReview": {
+      "title": "SellerReview",
+      "description": "Verified student star rating and written review of a campus seller.",
+      "type": "object",
+      "properties": {
+        "sellerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Firebase Auth UID of the seller being reviewed."
+        },
+        "reviewerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Firebase Auth UID of the reviewing student matching this document ID."
+        },
+        "orderId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Completed order document ID in /orders/{orderId} where buyerId == reviewerId, sellerId == sellerId, and status == 'completed'."
+        },
+        "reviewerName": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 60,
+          "description": "Sanitized display name of the reviewing student."
+        },
+        "rating": {
+          "type": "integer",
+          "description": "Whole star rating from 1 to 5."
+        },
+        "comment": {
+          "type": "string",
+          "minLength": 5,
+          "maxLength": 500,
+          "description": "Sanitized written review comment."
+        },
+        "listingId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Optional listing document ID where the review was submitted."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of review creation."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of last review update."
+        }
+      },
+      "required": [
+        "sellerId",
+        "reviewerId",
+        "orderId",
+        "reviewerName",
+        "rating",
+        "comment",
+        "createdAt",
+        "updatedAt"
+      ]
     },
     "Listing": {
       "title": "Listing",
@@ -93,6 +210,10 @@
           "maxLength": 60,
           "description": "Display name of the seller at creation/update time."
         },
+        "sellerVerifiedStudent": {
+          "type": "boolean",
+          "description": "Optional non-blocking Verified Student badge when the seller holds a verified academic email (.edu or .edu.gh)."
+        },
         "title": {
           "type": "string",
           "minLength": 3,
@@ -111,7 +232,7 @@
         },
         "category": {
           "type": "string",
-          "enum": ["textbooks", "electronics", "hostel_furniture", "clothing", "services", "other"],
+          "enum": ["textbooks", "electronics", "hostel_furniture", "dorm_essentials", "clothing", "services", "other"],
           "description": "Marketplace item category."
         },
         "condition": {
@@ -153,6 +274,466 @@
         "createdAt",
         "updatedAt"
       ]
+    },
+    "Order": {
+      "title": "Order",
+      "description": "Marketplace order supporting Ghana local MoMo/campus meetup verification and server-managed Paystack checkout.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "listingId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "listingTitle": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "buyerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "sellerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "amountPesewas": {
+          "type": "integer",
+          "description": "Gross order price in whole pesewas."
+        },
+        "commissionBps": {
+          "type": "integer",
+          "description": "Commission rate in basis points."
+        },
+        "commissionPesewas": {
+          "type": "integer",
+          "description": "Platform fee in whole pesewas."
+        },
+        "sellerAmountPesewas": {
+          "type": "integer",
+          "description": "Net seller earnings in whole pesewas."
+        },
+        "currency": {
+          "type": "string",
+          "enum": ["GHS"]
+        },
+        "paystackReference": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "released": {
+          "type": "boolean"
+        },
+        "paymentMethod": {
+          "type": "string",
+          "enum": ["pay_on_meetup", "momo_prepayment", "paystack", "manual_transfer"]
+        },
+        "paymentStatus": {
+          "type": "string",
+          "enum": ["unpaid", "proof_submitted", "verified", "pay_on_meetup"]
+        },
+        "receiptStatus": {
+          "type": "string",
+          "enum": ["none", "submitted", "verified", "rejected"]
+        },
+        "transactionId": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 80
+        },
+        "manualReference": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 80
+        },
+        "receiptUrl": {
+          "type": "string",
+          "minLength": 10,
+          "maxLength": 1000
+        },
+        "receiptImageUrl": {
+          "type": "string",
+          "minLength": 10,
+          "maxLength": 1000
+        },
+        "receiptNote": {
+          "type": "string",
+          "maxLength": 300
+        },
+        "sellerMoMoNetwork": {
+          "type": "string",
+          "enum": ["mtn", "telecel", "at"]
+        },
+        "sellerMoMoNumber": {
+          "type": "string",
+          "minLength": 10,
+          "maxLength": 16
+        },
+        "sellerMoMoAccountName": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 80
+        },
+        "handoverPinSet": {
+          "type": "boolean"
+        },
+        "handoverPin": {
+          "type": "string",
+          "pattern": "^[0-9]{4}$",
+          "description": "Written onto the order only upon seller PIN confirmation at campus handover."
+        },
+        "receiptSubmittedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "buyerFlaggedPaidAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "paidAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "shippedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "completedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "releasedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "cancelledAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["pending_payment", "payment_submitted", "paid", "shipped", "completed", "cancelled", "disputed", "refunded"]
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "listingId",
+        "listingTitle",
+        "buyerId",
+        "sellerId",
+        "amountPesewas",
+        "status",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "OrderHandoverSecret": {
+      "title": "OrderHandoverSecret",
+      "description": "Buyer-only 4-digit campus meetup handover PIN isolated from the seller until physical handover verification.",
+      "type": "object",
+      "properties": {
+        "orderId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "buyerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "sellerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "handoverPin": {
+          "type": "string",
+          "pattern": "^[0-9]{4}$",
+          "description": "4-digit numeric handover confirmation PIN visible only to the buyer."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["orderId", "buyerId", "sellerId", "handoverPin", "createdAt"]
+    },
+    "Notification": {
+      "title": "Notification",
+      "description": "Order event alert written by Cloud Functions for a buyer or seller.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "userId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "orderId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "listingId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "eventType": {
+          "type": "string",
+          "enum": ["paid", "shipped", "completed", "cancelled"]
+        },
+        "recipientRole": {
+          "type": "string",
+          "enum": ["buyer", "seller"]
+        },
+        "title": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 120
+        },
+        "body": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 300
+        },
+        "read": {
+          "type": "boolean"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "readAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "userId",
+        "orderId",
+        "listingId",
+        "eventType",
+        "recipientRole",
+        "title",
+        "body",
+        "read",
+        "createdAt"
+      ]
+    },
+    "ListingChatThread": {
+      "title": "ListingChatThread",
+      "description": "Private 1-on-1 negotiation and Q&A conversation thread between a verified buyer and seller for a specific listing.",
+      "type": "object",
+      "properties": {
+        "listingId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Parent listing document ID."
+        },
+        "buyerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Buyer Firebase Auth UID matching this thread document ID."
+        },
+        "sellerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Seller Firebase Auth UID matching parent listing sellerId."
+        },
+        "buyerName": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 60,
+          "description": "Sanitized buyer display name."
+        },
+        "sellerName": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 60,
+          "description": "Sanitized seller display name."
+        },
+        "lastMessageText": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "description": "Truncated preview of the most recent message in this thread."
+        },
+        "lastMessageSenderId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "UID of the participant who sent the most recent message."
+        },
+        "lastOfferPesewas": {
+          "type": "integer",
+          "description": "Optional latest negotiated offer amount in whole pesewas (100 to 100000000)."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of thread creation."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of latest message in thread."
+        }
+      },
+      "required": [
+        "listingId",
+        "buyerId",
+        "sellerId",
+        "buyerName",
+        "sellerName",
+        "lastMessageText",
+        "lastMessageSenderId",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "ListingChatMessage": {
+      "title": "ListingChatMessage",
+      "description": "Immutable real-time chat message or price offer exchanged between buyer and seller on a listing.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Message document ID."
+        },
+        "listingId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Parent listing document ID."
+        },
+        "buyerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Thread buyer UID."
+        },
+        "sellerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Thread seller UID."
+        },
+        "senderId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Firebase Auth UID of the message author."
+        },
+        "senderName": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 60,
+          "description": "Sanitized display name of the message author."
+        },
+        "senderRole": {
+          "type": "string",
+          "enum": ["buyer", "seller"],
+          "description": "Role of the sender within this listing conversation."
+        },
+        "type": {
+          "type": "string",
+          "enum": ["text", "offer"],
+          "description": "Whether this message is standard text or a price offer/counter-offer."
+        },
+        "body": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000,
+          "description": "Sanitized message text."
+        },
+        "offerPesewas": {
+          "type": "integer",
+          "description": "Whole pesewas proposed when type is 'offer' (100 to 100000000)."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of message creation."
+        }
+      },
+      "required": [
+        "id",
+        "listingId",
+        "buyerId",
+        "sellerId",
+        "senderId",
+        "senderName",
+        "senderRole",
+        "type",
+        "body",
+        "createdAt"
+      ]
+    },
+    "Mail": {
+      "title": "Mail",
+      "description": "Email queue document consumed by Firebase Trigger Email extension.",
+      "type": "object",
+      "properties": {
+        "to": {
+          "type": "array"
+        },
+        "message": {
+          "type": "object"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["to", "message"]
     }
   },
   "firestore": {
@@ -162,11 +743,43 @@
     },
     "/users/{userId}/private/{docId}": {
       "schema": { "$ref": "#/entities/UserPrivate" },
-      "description": "Owner-only PII subcollection storing verified school email at docId 'info'."
+      "description": "Owner-only PII subcollection storing verified email at docId 'info'."
+    },
+    "/users/{userId}/favorites/{listingId}": {
+      "schema": { "$ref": "#/entities/Favorite" },
+      "description": "Owner-only wishlist subcollection storing a student's saved listings."
+    },
+    "/users/{userId}/reviews/{reviewerId}": {
+      "schema": { "$ref": "#/entities/SellerReview" },
+      "description": "Verified student star ratings and written reviews for a seller, keyed by reviewer UID and gated on at least one completed order with that seller."
     },
     "/listings/{listingId}": {
       "schema": { "$ref": "#/entities/Listing" },
       "description": "Student marketplace item listings."
+    },
+    "/listings/{listingId}/threads/{buyerId}": {
+      "schema": { "$ref": "#/entities/ListingChatThread" },
+      "description": "Private 1-on-1 negotiation and Q&A thread per buyer for a listing."
+    },
+    "/listings/{listingId}/threads/{buyerId}/messages/{messageId}": {
+      "schema": { "$ref": "#/entities/ListingChatMessage" },
+      "description": "Immutable real-time chat messages and price offers within a listing thread."
+    },
+    "/orders/{orderId}": {
+      "schema": { "$ref": "#/entities/Order" },
+      "description": "Marketplace orders supporting Ghana local payment proofs, PIN-gated handover completion, and server-managed Paystack checkout."
+    },
+    "/orders/{orderId}/secrets/{secretId}": {
+      "schema": { "$ref": "#/entities/OrderHandoverSecret" },
+      "description": "Buyer-only handover confirmation PIN isolated from the seller before physical campus meetup verification."
+    },
+    "/notifications/{notificationId}": {
+      "schema": { "$ref": "#/entities/Notification" },
+      "description": "Buyer and seller order notifications written by Cloud Functions."
+    },
+    "/mail/{mailId}": {
+      "schema": { "$ref": "#/entities/Mail" },
+      "description": "Server-only email delivery queue for Firebase Trigger Email extension."
     }
   }
 }

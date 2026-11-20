@@ -2,10 +2,18 @@ import React, { useState } from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
 import { CheckCircle2, MailCheck, RefreshCw } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
-import { getConfiguredSchoolDomains } from '../config/marketplace';
 
 export function AuthPage() {
-  const { user, isVerified, signIn, signUp, resendVerification, refreshUser, signOut } = useAuth();
+  const {
+    user,
+    isVerified,
+    signIn,
+    signInWithGoogle,
+    signUp,
+    resendVerification,
+    refreshUser,
+    signOut,
+  } = useAuth();
   const location = useLocation();
   const redirectTo = (location.state as { from?: string } | null)?.from || '/';
 
@@ -22,8 +30,6 @@ export function AuthPage() {
     return <Navigate to={redirectTo} replace />;
   }
 
-  const allowedDomains = getConfiguredSchoolDomains();
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
@@ -34,7 +40,7 @@ export function AuthPage() {
         await signIn(email, password);
       } else {
         await signUp({ displayName, campus, email, password });
-        setNotice('Account created. Check your school inbox and click the verification link.');
+        setNotice('Account created. Check your inbox and click the verification link.');
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Authentication failed.');
@@ -73,6 +79,19 @@ export function AuthPage() {
     }
   };
 
+  const handleGoogleSignIn = async () => {
+    setError('');
+    setNotice('');
+    setSubmitting(true);
+    try {
+      await signInWithGoogle();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Google sign-in failed.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   if (user && !isVerified) {
     return (
       <main className="max-w-md mx-auto px-4 py-12">
@@ -81,7 +100,7 @@ export function AuthPage() {
             <MailCheck className="w-5 h-5" aria-hidden="true" />
           </div>
           <div className="space-y-2">
-            <h1 className="text-xl font-bold text-zinc-900">Verify your school email</h1>
+            <h1 className="text-xl font-bold text-zinc-900">Verify your email</h1>
             <p className="text-sm text-zinc-600 leading-relaxed">
               We sent a verification link to <span className="font-medium text-zinc-900">{user.email}</span>.
               Marketplace access stays locked until your email is verified.
@@ -138,10 +157,10 @@ export function AuthPage() {
       <section className="bg-white border border-stone-200 rounded-xl p-6 space-y-6">
         <div className="space-y-1.5">
           <h1 className="text-2xl font-bold tracking-tight text-zinc-900">
-            {mode === 'signin' ? 'Sign in to Campus Market' : 'Create your student account'}
+            {mode === 'signin' ? 'Sign in to Campus Market' : 'Create your account'}
           </h1>
           <p className="text-sm text-zinc-600">
-            Verified school email is required to browse, post, and trade safely on campus.
+            Verify any valid email address to browse, post listings, and trade safely on campus.
           </p>
         </div>
 
@@ -217,7 +236,7 @@ export function AuthPage() {
 
           <div>
             <label htmlFor="auth-email" className="block text-sm font-medium text-zinc-900 mb-1">
-              School Email
+              Email Address
             </label>
             <input
               id="auth-email"
@@ -226,18 +245,13 @@ export function AuthPage() {
               autoComplete="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              placeholder={
-                allowedDomains.length > 0
-                  ? `student@${allowedDomains[0]}`
-                  : 'student@school.edu.gh'
-              }
+              placeholder="you@example.com"
               className="w-full px-3 py-2.5 text-sm bg-white border border-stone-300 rounded-lg focus:outline-none focus:border-emerald-900"
             />
-            {allowedDomains.length > 0 && (
-              <p className="mt-1 text-xs text-zinc-500">
-                Allowed domains: {allowedDomains.map((d) => `@${d}`).join(', ')}
-              </p>
-            )}
+            <p className="mt-1 text-xs text-zinc-600 leading-relaxed">
+              Gmail, Yahoo, Outlook, and university emails are all welcome. Academic emails
+              (.edu, .edu.gh) automatically earn a Verified Student badge.
+            </p>
           </div>
 
           <div>
@@ -279,9 +293,42 @@ export function AuthPage() {
                 : 'Creating account...'
               : mode === 'signin'
                 ? 'Sign In'
-                : 'Create Student Account'}
+                : 'Create Account'}
           </button>
         </form>
+
+        <div className="relative flex items-center py-1">
+          <div className="flex-grow border-t border-stone-200" />
+          <span className="shrink mx-3 text-xs text-zinc-500">or</span>
+          <div className="flex-grow border-t border-stone-200" />
+        </div>
+
+        <button
+          type="button"
+          disabled={submitting}
+          onClick={handleGoogleSignIn}
+          className="w-full inline-flex items-center justify-center gap-2.5 py-2.5 px-4 text-sm font-medium text-zinc-900 bg-white border border-stone-300 hover:bg-stone-50 rounded-lg disabled:opacity-50 transition-colors"
+        >
+          <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24" aria-hidden="true">
+            <path
+              fill="#4285F4"
+              d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.665-5.17 3.665-9.17Z"
+            />
+            <path
+              fill="#34A853"
+              d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.11-6.72-4.96H1.29v3.14C3.26 21.3 7.31 24 12 24Z"
+            />
+            <path
+              fill="#FBBC05"
+              d="M5.28 14.24c-.24-.72-.38-1.49-.38-2.24s.14-1.52.38-2.24V6.62H1.29C.47 8.24 0 10.06 0 12s.47 3.76 1.29 5.38l3.99-3.14Z"
+            />
+            <path
+              fill="#EA4335"
+              d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.31 0 3.26 2.7 1.29 6.62l3.99 3.14c.95-2.85 3.6-4.96 6.72-4.96Z"
+            />
+          </svg>
+          Continue with Google
+        </button>
       </section>
     </main>
   );

@@ -24,16 +24,30 @@ service cloud.firestore {
       return request.auth != null;
     }
 
+    // Open verified-email gate: accepts any valid verified email address
+    // (@gmail.com, @yahoo.com, @outlook.com, .edu.gh, .edu, etc.).
     function isVerifiedUser() {
-      // TODO(school-domain): Once the school confirms the exact domain(s),
-      // enforce e.g. && request.auth.token.email.matches('^[^@]+@(st\\.ug\\.edu\\.gh)$')
-      return isSignedIn() && request.auth.token.email_verified == true;
+      return isSignedIn()
+        && 'email_verified' in request.auth.token
+        && request.auth.token.email_verified == true
+        && 'email' in request.auth.token
+        && request.auth.token.email is string
+        && request.auth.token.email.size() >= 5
+        && request.auth.token.email.size() <= 254
+        && request.auth.token.email.matches('^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$');
+    }
+
+    // Optional Verified Student badge check: only academic emails (.edu or .edu.gh)
+    // may claim verifiedStudent = true / sellerVerifiedStudent = true.
+    function isAcademicEmail() {
+      return isVerifiedUser()
+        && request.auth.token.email.lower().matches('^[^@\\s]+@([a-z0-9-]+\\.)+(edu|edu\\.gh)$');
     }
 
     function isAdmin() {
       return isVerifiedUser() && (
         exists(/databases/$(database)/documents/admins/$(request.auth.uid)) ||
-        request.auth.token.email == 'abrahamderry30@gmail.com'
+        request.auth.token.email.lower() == 'abrahamderry30@gmail.com'
       );
     }
 
@@ -42,17 +56,39 @@ service cloud.firestore {
         && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.banned == true;
     }
 
+    function hasCompletedOrderWithSeller(orderId, buyerId, sellerId) {
+      return isValidId(orderId)
+        && exists(/databases/$(database)/documents/orders/$(orderId))
+        && get(/databases/$(database)/documents/orders/$(orderId)).data.buyerId == buyerId
+        && get(/databases/$(database)/documents/orders/$(orderId)).data.sellerId == sellerId
+        && get(/databases/$(database)/documents/orders/$(orderId)).data.status == 'completed';
+    }
+
     function isValidImageUrl(url) {
       return url is string && url.size() >= 10 && url.size() <= 1000 && url.matches('^https://.*');
+    }
+
+    function isValidGhanaPhone(phone) {
+      return phone is string
+        && phone.size() >= 10
+        && phone.size() <= 16
+        && phone.matches('^(\\+233|0)[0-9]{9}$');
     }
 
     // --- Validation Blueprints ---
     function isValidUserPublic(data) {
       return data.keys().hasAll(['uid', 'displayName', 'role', 'banned', 'createdAt'])
-        && data.keys().hasOnly(['uid', 'displayName', 'campus', 'role', 'banned', 'createdAt'])
+        && data.keys().hasOnly([
+          'uid', 'displayName', 'campus', 'momoNetwork', 'momoNumber', 'momoAccountName',
+          'verifiedStudent', 'role', 'banned', 'createdAt'
+        ])
         && isValidId(data.uid)
         && data.displayName is string && data.displayName.size() >= 2 && data.displayName.size() <= 60
         && (!('campus' in data) || (data.campus is string && data.campus.size() >= 2 && data.campus.size() <= 80))
+        && (!('momoNetwork' in data) || data.momoNetwork in ['mtn', 'telecel', 'at'])
+        && (!('momoNumber' in data) || isValidGhanaPhone(data.momoNumber))
+        && (!('momoAccountName' in data) || (data.momoAccountName is string && data.momoAccountName.size() >= 2 && data.momoAccountName.size() <= 80))
+        && (!('verifiedStudent' in data) || data.verifiedStudent is bool)
         && data.role in ['student', 'admin']
         && data.banned is bool
         && data.createdAt is timestamp;
@@ -66,6 +102,40 @@ service cloud.firestore {
         && data.createdAt is timestamp;
     }
 
+    function isValidFavorite(data) {
+      return data.keys().hasAll(['userId', 'listingId', 'createdAt'])
+        && data.keys().hasOnly([
+          'userId', 'listingId', 'createdAt',
+          'savedTitle', 'savedPricePesewas', 'savedCategory'
+        ])
+        && isValidId(data.userId)
+        && isValidId(data.listingId)
+        && data.userId == request.auth.uid
+        && (!('savedTitle' in data) || (data.savedTitle is string && data.savedTitle.size() >= 1 && data.savedTitle.size() <= 100))
+        && (!('savedPricePesewas' in data) || (data.savedPricePesewas is int && data.savedPricePesewas >= 100 && data.savedPricePesewas <= 100000000))
+        && (!('savedCategory' in data) || data.savedCategory in ['textbooks', 'electronics', 'hostel_furniture', 'dorm_essentials', 'clothing', 'services', 'other'])
+        && data.createdAt is timestamp;
+    }
+
+    function isValidSellerReview(data) {
+      return data.keys().hasAll([
+          'sellerId', 'reviewerId', 'orderId', 'reviewerName', 'rating', 'comment', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'sellerId', 'reviewerId', 'orderId', 'reviewerName', 'rating', 'comment', 'listingId', 'createdAt', 'updatedAt'
+        ])
+        && isValidId(data.sellerId)
+        && isValidId(data.reviewerId)
+        && isValidId(data.orderId)
+        && data.reviewerId == request.auth.uid
+        && data.reviewerName is string && data.reviewerName.size() >= 2 && data.reviewerName.size() <= 60
+        && data.rating is int && data.rating >= 1 && data.rating <= 5
+        && data.comment is string && data.comment.size() >= 5 && data.comment.size() <= 500
+        && (!('listingId' in data) || isValidId(data.listingId))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
     function isValidListing(data) {
       return data.keys().hasAll([
           'id', 'sellerId', 'sellerName', 'title', 'description',
@@ -73,17 +143,18 @@ service cloud.firestore {
           'createdAt', 'updatedAt'
         ])
         && data.keys().hasOnly([
-          'id', 'sellerId', 'sellerName', 'title', 'description',
+          'id', 'sellerId', 'sellerName', 'sellerVerifiedStudent', 'title', 'description',
           'pricePesewas', 'category', 'condition', 'images', 'status',
           'createdAt', 'updatedAt'
         ])
         && isValidId(data.id)
         && isValidId(data.sellerId)
         && data.sellerName is string && data.sellerName.size() >= 2 && data.sellerName.size() <= 60
+        && (!('sellerVerifiedStudent' in data) || data.sellerVerifiedStudent is bool)
         && data.title is string && data.title.size() >= 3 && data.title.size() <= 100
         && data.description is string && data.description.size() >= 10 && data.description.size() <= 2000
         && data.pricePesewas is int && data.pricePesewas >= 100 && data.pricePesewas <= 100000000
-        && data.category in ['textbooks', 'electronics', 'hostel_furniture', 'clothing', 'services', 'other']
+        && data.category in ['textbooks', 'electronics', 'hostel_furniture', 'dorm_essentials', 'clothing', 'services', 'other']
         && data.condition in ['new', 'like_new', 'good', 'fair']
         && data.images is list && data.images.size() >= 1 && data.images.size() <= 5
         && isValidImageUrl(data.images[0])
@@ -96,8 +167,170 @@ service cloud.firestore {
         && data.updatedAt is timestamp;
     }
 
+    function isValidChatThread(data) {
+      return data.keys().hasAll([
+          'listingId', 'buyerId', 'sellerId', 'buyerName', 'sellerName',
+          'lastMessageText', 'lastMessageSenderId', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'listingId', 'buyerId', 'sellerId', 'buyerName', 'sellerName',
+          'lastMessageText', 'lastMessageSenderId', 'lastOfferPesewas', 'createdAt', 'updatedAt'
+        ])
+        && isValidId(data.listingId)
+        && isValidId(data.buyerId)
+        && isValidId(data.sellerId)
+        && data.buyerId != data.sellerId
+        && data.buyerName is string && data.buyerName.size() >= 2 && data.buyerName.size() <= 60
+        && data.sellerName is string && data.sellerName.size() >= 2 && data.sellerName.size() <= 60
+        && data.lastMessageText is string && data.lastMessageText.size() >= 1 && data.lastMessageText.size() <= 200
+        && (data.lastMessageSenderId == data.buyerId || data.lastMessageSenderId == data.sellerId)
+        && data.lastMessageSenderId == request.auth.uid
+        && (!('lastOfferPesewas' in data) || (data.lastOfferPesewas is int && data.lastOfferPesewas >= 100 && data.lastOfferPesewas <= 100000000))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidChatMessage(data) {
+      return data.keys().hasAll([
+          'id', 'listingId', 'buyerId', 'sellerId', 'senderId',
+          'senderName', 'senderRole', 'type', 'body', 'createdAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'listingId', 'buyerId', 'sellerId', 'senderId',
+          'senderName', 'senderRole', 'type', 'body', 'offerPesewas', 'createdAt'
+        ])
+        && isValidId(data.id)
+        && isValidId(data.listingId)
+        && isValidId(data.buyerId)
+        && isValidId(data.sellerId)
+        && data.buyerId != data.sellerId
+        && isValidId(data.senderId)
+        && data.senderId == request.auth.uid
+        && data.senderName is string && data.senderName.size() >= 2 && data.senderName.size() <= 60
+        && data.senderRole in ['buyer', 'seller']
+        && data.type in ['text', 'offer']
+        && data.body is string && data.body.size() >= 1 && data.body.size() <= 1000
+        && (
+          (data.type == 'text' && !('offerPesewas' in data))
+          || (data.type == 'offer' && 'offerPesewas' in data && data.offerPesewas is int && data.offerPesewas >= 100 && data.offerPesewas <= 100000000)
+        )
+        && data.createdAt is timestamp;
+    }
+
+    function isValidNotification(data) {
+      return data.keys().hasAll([
+          'id', 'userId', 'orderId', 'listingId', 'eventType',
+          'recipientRole', 'title', 'body', 'read', 'createdAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'userId', 'orderId', 'listingId', 'eventType',
+          'recipientRole', 'title', 'body', 'read', 'createdAt', 'readAt'
+        ])
+        && isValidId(data.id)
+        && isValidId(data.userId)
+        && isValidId(data.orderId)
+        && isValidId(data.listingId)
+        && data.eventType in ['paid', 'shipped', 'completed', 'cancelled']
+        && data.recipientRole in ['buyer', 'seller']
+        && data.title is string && data.title.size() >= 3 && data.title.size() <= 120
+        && data.body is string && data.body.size() >= 3 && data.body.size() <= 300
+        && data.read is bool
+        && data.createdAt is timestamp
+        && (!('readAt' in data) || data.readAt is timestamp);
+    }
+
+    function isValidOrder(data) {
+      return data.keys().hasAll([
+          'id', 'listingId', 'listingTitle', 'buyerId', 'sellerId',
+          'currency', 'amountPesewas', 'commissionBps', 'commissionPesewas', 'sellerAmountPesewas',
+          'paymentMethod', 'paymentStatus', 'receiptStatus', 'status', 'released',
+          'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'listingId', 'listingTitle', 'buyerId', 'sellerId',
+          'currency', 'amountPesewas', 'commissionBps', 'commissionPesewas', 'sellerAmountPesewas',
+          'paystackReference', 'paymentMethod', 'paymentStatus', 'receiptStatus',
+          'transactionId', 'manualReference', 'receiptUrl', 'receiptImageUrl', 'receiptNote',
+          'receiptSubmittedAt', 'buyerFlaggedPaidAt',
+          'sellerMoMoNetwork', 'sellerMoMoNumber', 'sellerMoMoAccountName',
+          'handoverPinSet', 'handoverPin',
+          'status', 'released', 'createdAt', 'updatedAt',
+          'paidAt', 'shippedAt', 'completedAt', 'releasedAt', 'cancelledAt'
+        ])
+        && isValidId(data.id)
+        && isValidId(data.listingId)
+        && isValidId(data.buyerId)
+        && isValidId(data.sellerId)
+        && data.buyerId != data.sellerId
+        && data.listingTitle is string && data.listingTitle.size() >= 1 && data.listingTitle.size() <= 100
+        && data.currency == 'GHS'
+        && data.amountPesewas is int && data.amountPesewas >= 100 && data.amountPesewas <= 100000000
+        && data.commissionBps is int && data.commissionBps >= 0 && data.commissionBps <= 3000
+        && data.commissionPesewas is int && data.commissionPesewas >= 0 && data.commissionPesewas <= data.amountPesewas
+        && data.sellerAmountPesewas is int && data.sellerAmountPesewas >= 0 && data.sellerAmountPesewas <= data.amountPesewas
+        && data.commissionPesewas + data.sellerAmountPesewas == data.amountPesewas
+        && data.paymentMethod in ['pay_on_meetup', 'momo_prepayment', 'paystack', 'manual_transfer']
+        && data.paymentStatus in ['unpaid', 'proof_submitted', 'verified', 'pay_on_meetup']
+        && data.receiptStatus in ['none', 'submitted', 'verified', 'rejected']
+        && data.status in ['pending_payment', 'payment_submitted', 'paid', 'shipped', 'completed', 'cancelled', 'disputed', 'refunded']
+        && data.released is bool
+        && (!('paystackReference' in data) || (data.paystackReference is string && data.paystackReference.size() <= 128))
+        && (!('transactionId' in data) || (data.transactionId is string && data.transactionId.size() >= 3 && data.transactionId.size() <= 80))
+        && (!('manualReference' in data) || (data.manualReference is string && data.manualReference.size() >= 3 && data.manualReference.size() <= 80))
+        && (!('receiptUrl' in data) || isValidImageUrl(data.receiptUrl))
+        && (!('receiptImageUrl' in data) || isValidImageUrl(data.receiptImageUrl))
+        && (!('receiptNote' in data) || (data.receiptNote is string && data.receiptNote.size() <= 300))
+        && (!('sellerMoMoNetwork' in data) || data.sellerMoMoNetwork in ['mtn', 'telecel', 'at'])
+        && (!('sellerMoMoNumber' in data) || isValidGhanaPhone(data.sellerMoMoNumber))
+        && (!('sellerMoMoAccountName' in data) || (data.sellerMoMoAccountName is string && data.sellerMoMoAccountName.size() >= 2 && data.sellerMoMoAccountName.size() <= 80))
+        && (!('handoverPinSet' in data) || data.handoverPinSet is bool)
+        && (!('handoverPin' in data) || (data.handoverPin is string && data.handoverPin.matches('^[0-9]{4}$')))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp
+        && (!('receiptSubmittedAt' in data) || data.receiptSubmittedAt is timestamp)
+        && (!('buyerFlaggedPaidAt' in data) || data.buyerFlaggedPaidAt is timestamp)
+        && (!('paidAt' in data) || data.paidAt is timestamp)
+        && (!('shippedAt' in data) || data.shippedAt is timestamp)
+        && (!('completedAt' in data) || data.completedAt is timestamp)
+        && (!('releasedAt' in data) || data.releasedAt is timestamp)
+        && (!('cancelledAt' in data) || data.cancelledAt is timestamp);
+    }
+
+    function isValidHandoverSecret(data) {
+      return data.keys().hasAll(['orderId', 'buyerId', 'sellerId', 'handoverPin', 'createdAt'])
+        && data.keys().hasOnly(['orderId', 'buyerId', 'sellerId', 'handoverPin', 'createdAt'])
+        && isValidId(data.orderId)
+        && isValidId(data.buyerId)
+        && isValidId(data.sellerId)
+        && data.buyerId != data.sellerId
+        && data.handoverPin is string
+        && data.handoverPin.matches('^[0-9]{4}$')
+        && data.createdAt is timestamp;
+    }
+
+    function isImmutableOrderCoreUnchanged() {
+      return incoming().id == existing().id
+        && incoming().listingId == existing().listingId
+        && incoming().listingTitle == existing().listingTitle
+        && incoming().buyerId == existing().buyerId
+        && incoming().sellerId == existing().sellerId
+        && incoming().currency == existing().currency
+        && incoming().amountPesewas == existing().amountPesewas
+        && incoming().commissionBps == existing().commissionBps
+        && incoming().commissionPesewas == existing().commissionPesewas
+        && incoming().sellerAmountPesewas == existing().sellerAmountPesewas
+        && incoming().paymentMethod == existing().paymentMethod
+        && incoming().createdAt == existing().createdAt
+        && (!('paystackReference' in existing()) || incoming().paystackReference == existing().paystackReference);
+    }
+
     // --- Admin Registry (Server-managed only) ---
     match /admins/{adminId} {
+      allow read, write: if false;
+    }
+
+    // --- Trigger Email Queue (Server-managed only) ---
+    match /mail/{mailId} {
       allow read, write: if false;
     }
 
@@ -113,6 +346,7 @@ service cloud.firestore {
         && incoming().uid == request.auth.uid
         && incoming().role == 'student'
         && incoming().banned == false
+        && (!('verifiedStudent' in incoming()) || incoming().verifiedStudent == false || isAcademicEmail())
         && incoming().createdAt == request.time;
 
       allow update: if isValidId(userId)
@@ -126,7 +360,10 @@ service cloud.firestore {
             && incoming().role == existing().role
             && incoming().banned == existing().banned
             && incoming().createdAt == existing().createdAt
-            && incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'campus'])
+            && (!('verifiedStudent' in incoming()) || incoming().verifiedStudent == false || isAcademicEmail())
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'displayName', 'campus', 'momoNetwork', 'momoNumber', 'momoAccountName', 'verifiedStudent'
+            ])
           )
         );
 
@@ -148,6 +385,83 @@ service cloud.firestore {
 
         allow update, delete: if false;
       }
+
+      // Saved Items / Favorites: /users/{userId}/favorites/{listingId}
+      match /favorites/{listingId} {
+        allow get: if isVerifiedUser()
+          && isValidId(userId) && isValidId(listingId)
+          && request.auth.uid == userId;
+
+        allow list: if isVerifiedUser()
+          && request.auth.uid == userId
+          && resource.data.userId == request.auth.uid;
+
+        allow create: if isVerifiedUser()
+          && isValidId(userId) && isValidId(listingId)
+          && request.auth.uid == userId
+          && isValidFavorite(incoming())
+          && incoming().userId == userId
+          && incoming().listingId == listingId
+          && incoming().createdAt == request.time
+          && !isBannedUser()
+          && exists(/databases/$(database)/documents/listings/$(listingId))
+          && get(/databases/$(database)/documents/listings/$(listingId)).data.status != 'removed';
+
+        allow update: if false;
+
+        allow delete: if isVerifiedUser()
+          && isValidId(userId) && isValidId(listingId)
+          && request.auth.uid == userId
+          && existing().userId == request.auth.uid
+          && !isBannedUser();
+      }
+
+      // Seller reviews: /users/{sellerId}/reviews/{reviewerId} (parent {userId} is sellerId)
+      match /reviews/{reviewerId} {
+        allow get: if isValidId(userId) && isValidId(reviewerId)
+          && isVerifiedUser();
+
+        allow list: if isVerifiedUser()
+          && resource.data.sellerId == userId;
+
+        allow create: if isValidId(userId) && isValidId(reviewerId)
+          && isVerifiedUser()
+          && request.auth.uid == reviewerId
+          && request.auth.uid != userId
+          && isValidSellerReview(incoming())
+          && incoming().sellerId == userId
+          && incoming().reviewerId == reviewerId
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time
+          && !isBannedUser()
+          && exists(/databases/$(database)/documents/users/$(userId))
+          && hasCompletedOrderWithSeller(incoming().orderId, request.auth.uid, userId);
+
+        allow update: if isValidId(userId) && isValidId(reviewerId)
+          && isVerifiedUser()
+          && isValidSellerReview(incoming())
+          && request.auth.uid == reviewerId
+          && request.auth.uid != userId
+          && existing().reviewerId == request.auth.uid
+          && existing().sellerId == userId
+          && incoming().sellerId == existing().sellerId
+          && incoming().reviewerId == existing().reviewerId
+          && incoming().orderId == existing().orderId
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'rating', 'comment', 'reviewerName', 'updatedAt'
+          ])
+          && !isBannedUser()
+          && hasCompletedOrderWithSeller(existing().orderId, request.auth.uid, userId);
+
+        allow delete: if isValidId(userId) && isValidId(reviewerId)
+          && isVerifiedUser()
+          && (
+            (request.auth.uid == reviewerId && existing().reviewerId == request.auth.uid && !isBannedUser())
+            || isAdmin()
+          );
+      }
     }
 
     // --- Listings ---
@@ -164,6 +478,7 @@ service cloud.firestore {
         && isValidListing(incoming())
         && incoming().id == listingId
         && incoming().sellerId == request.auth.uid
+        && (!('sellerVerifiedStudent' in incoming()) || incoming().sellerVerifiedStudent == false || isAcademicEmail())
         && incoming().status == 'active'
         && incoming().createdAt == request.time
         && incoming().updatedAt == request.time
@@ -181,15 +496,311 @@ service cloud.firestore {
             && incoming().sellerId == existing().sellerId
             && incoming().createdAt == existing().createdAt
             && incoming().updatedAt == request.time
+            && (!('sellerVerifiedStudent' in incoming()) || incoming().sellerVerifiedStudent == false || isAcademicEmail())
             && incoming().diff(existing()).affectedKeys().hasOnly([
               'title', 'description', 'pricePesewas', 'category',
-              'condition', 'images', 'status', 'sellerName', 'updatedAt'
+              'condition', 'images', 'status', 'sellerName', 'sellerVerifiedStudent', 'updatedAt'
             ])
             && !isBannedUser()
           )
         );
 
       allow delete: if false;
+
+      match /threads/{buyerId} {
+        allow get: if isValidId(listingId) && isValidId(buyerId)
+          && isVerifiedUser()
+          && (
+            request.auth.uid == buyerId
+            || (resource != null && existing().sellerId == request.auth.uid)
+            || isAdmin()
+          );
+
+        allow list: if isVerifiedUser()
+          && (
+            resource.data.buyerId == request.auth.uid
+            || resource.data.sellerId == request.auth.uid
+            || isAdmin()
+          );
+
+        allow create: if isValidId(listingId) && isValidId(buyerId)
+          && isVerifiedUser()
+          && request.auth.uid == buyerId
+          && isValidChatThread(incoming())
+          && incoming().listingId == listingId
+          && incoming().buyerId == buyerId
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time
+          && !isBannedUser()
+          && exists(/databases/$(database)/documents/listings/$(listingId))
+          && get(/databases/$(database)/documents/listings/$(listingId)).data.sellerId == incoming().sellerId
+          && get(/databases/$(database)/documents/listings/$(listingId)).data.status != 'removed';
+
+        allow update: if isValidId(listingId) && isValidId(buyerId)
+          && isVerifiedUser()
+          && isValidChatThread(incoming())
+          && (request.auth.uid == existing().buyerId || request.auth.uid == existing().sellerId)
+          && existing().listingId == listingId
+          && existing().buyerId == buyerId
+          && incoming().listingId == existing().listingId
+          && incoming().buyerId == existing().buyerId
+          && incoming().sellerId == existing().sellerId
+          && incoming().buyerName == existing().buyerName
+          && incoming().sellerName == existing().sellerName
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'lastMessageText', 'lastMessageSenderId', 'lastOfferPesewas', 'updatedAt'
+          ])
+          && !isBannedUser();
+
+        allow delete: if false;
+
+        match /messages/{messageId} {
+          allow get: if isValidId(listingId) && isValidId(buyerId) && isValidId(messageId)
+            && isVerifiedUser()
+            && (
+              request.auth.uid == buyerId
+              || (resource != null && existing().sellerId == request.auth.uid)
+              || isAdmin()
+            );
+
+          allow list: if isVerifiedUser()
+            && (
+              (request.auth.uid == buyerId && resource.data.buyerId == request.auth.uid)
+              || resource.data.sellerId == request.auth.uid
+              || isAdmin()
+            );
+
+          allow create: if isValidId(listingId) && isValidId(buyerId) && isValidId(messageId)
+            && isVerifiedUser()
+            && isValidChatMessage(incoming())
+            && incoming().id == messageId
+            && incoming().listingId == listingId
+            && incoming().buyerId == buyerId
+            && incoming().createdAt == request.time
+            && (
+              (request.auth.uid == buyerId && incoming().senderRole == 'buyer')
+              || (request.auth.uid == incoming().sellerId && incoming().senderRole == 'seller')
+            )
+            && !isBannedUser()
+            && existsAfter(/databases/$(database)/documents/listings/$(listingId)/threads/$(buyerId))
+            && getAfter(/databases/$(database)/documents/listings/$(listingId)/threads/$(buyerId)).data.buyerId == buyerId
+            && getAfter(/databases/$(database)/documents/listings/$(listingId)/threads/$(buyerId)).data.sellerId == incoming().sellerId
+            && getAfter(/databases/$(database)/documents/listings/$(listingId)/threads/$(buyerId)).data.updatedAt == request.time
+            && getAfter(/databases/$(database)/documents/listings/$(listingId)/threads/$(buyerId)).data.lastMessageSenderId == request.auth.uid;
+
+          allow update: if false;
+
+          allow delete: if isValidId(listingId) && isValidId(buyerId) && isValidId(messageId)
+            && isAdmin();
+        }
+      }
+    }
+
+    // --- Orders & Buyer-Isolated Campus Handover PIN ---
+    match /orders/{orderId} {
+      allow get: if isValidId(orderId)
+        && isVerifiedUser()
+        && (existing().buyerId == request.auth.uid || existing().sellerId == request.auth.uid || isAdmin());
+
+      allow list: if isVerifiedUser()
+        && (resource.data.buyerId == request.auth.uid || resource.data.sellerId == request.auth.uid || isAdmin());
+
+      allow create: if isValidId(orderId)
+        && isVerifiedUser()
+        && !isBannedUser()
+        && isValidOrder(incoming())
+        && incoming().id == orderId
+        && incoming().buyerId == request.auth.uid
+        && incoming().status == 'pending_payment'
+        && incoming().released == false
+        && incoming().receiptStatus == 'none'
+        && incoming().paymentMethod in ['pay_on_meetup', 'momo_prepayment']
+        && (
+          (incoming().paymentMethod == 'pay_on_meetup' && incoming().paymentStatus == 'pay_on_meetup')
+          || (incoming().paymentMethod == 'momo_prepayment' && incoming().paymentStatus == 'unpaid')
+        )
+        && !('handoverPin' in incoming())
+        && incoming().handoverPinSet == true
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && exists(/databases/$(database)/documents/listings/$(incoming().listingId))
+        && get(/databases/$(database)/documents/listings/$(incoming().listingId)).data.status == 'active'
+        && get(/databases/$(database)/documents/listings/$(incoming().listingId)).data.sellerId == incoming().sellerId
+        && get(/databases/$(database)/documents/listings/$(incoming().listingId)).data.pricePesewas == incoming().amountPesewas
+        && existsAfter(/databases/$(database)/documents/orders/$(orderId)/secrets/handover)
+        && getAfter(/databases/$(database)/documents/orders/$(orderId)/secrets/handover).data.orderId == orderId
+        && getAfter(/databases/$(database)/documents/orders/$(orderId)/secrets/handover).data.buyerId == request.auth.uid
+        && getAfter(/databases/$(database)/documents/orders/$(orderId)/secrets/handover).data.sellerId == incoming().sellerId;
+
+      allow update: if isValidId(orderId)
+        && isVerifiedUser()
+        && !isBannedUser()
+        && isValidOrder(incoming())
+        && isImmutableOrderCoreUnchanged()
+        && incoming().updatedAt == request.time
+        && (
+          // 1. Buyer submits MoMo proof
+          (
+            request.auth.uid == existing().buyerId
+            && existing().paymentMethod in ['momo_prepayment', 'manual_transfer']
+            && existing().status == 'pending_payment'
+            && existing().paymentStatus == 'unpaid'
+            && incoming().status == 'payment_submitted'
+            && incoming().paymentStatus == 'proof_submitted'
+            && incoming().receiptStatus == 'submitted'
+            && incoming().released == false
+            && !('handoverPin' in incoming())
+            && 'transactionId' in incoming()
+            && incoming().transactionId is string
+            && incoming().transactionId.size() >= 3
+            && incoming().transactionId.size() <= 80
+            && incoming().receiptSubmittedAt == request.time
+            && incoming().buyerFlaggedPaidAt == request.time
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'transactionId', 'manualReference', 'receiptUrl', 'receiptImageUrl', 'receiptNote',
+              'paymentStatus', 'receiptStatus', 'status', 'receiptSubmittedAt', 'buyerFlaggedPaidAt', 'updatedAt'
+            ])
+          )
+          // 2. Buyer cancels pending order
+          || (
+            request.auth.uid == existing().buyerId
+            && existing().status in ['pending_payment', 'payment_submitted']
+            && incoming().status == 'cancelled'
+            && incoming().paymentStatus == existing().paymentStatus
+            && incoming().released == false
+            && incoming().cancelledAt == request.time
+            && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'cancelledAt', 'updatedAt'])
+          )
+          // 3. Seller confirms MoMo receipt -> verified / paid
+          || (
+            request.auth.uid == existing().sellerId
+            && existing().status == 'payment_submitted'
+            && existing().paymentStatus == 'proof_submitted'
+            && incoming().paymentStatus == 'verified'
+            && incoming().receiptStatus == 'verified'
+            && incoming().status == 'paid'
+            && incoming().released == false
+            && !('handoverPin' in incoming())
+            && incoming().paidAt == request.time
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'paymentStatus', 'receiptStatus', 'status', 'paidAt', 'updatedAt'
+            ])
+          )
+          // 4. Seller flags invalid MoMo proof -> rejected / unpaid
+          || (
+            request.auth.uid == existing().sellerId
+            && existing().status == 'payment_submitted'
+            && existing().paymentStatus == 'proof_submitted'
+            && incoming().paymentStatus == 'unpaid'
+            && incoming().receiptStatus == 'rejected'
+            && incoming().status == 'pending_payment'
+            && incoming().released == false
+            && !('handoverPin' in incoming())
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'paymentStatus', 'receiptStatus', 'status', 'receiptNote', 'updatedAt'
+            ])
+          )
+          // 5. Seller marks paid/verified order as shipped
+          || (
+            request.auth.uid == existing().sellerId
+            && existing().status == 'paid'
+            && existing().paymentStatus == 'verified'
+            && incoming().status == 'shipped'
+            && incoming().paymentStatus == existing().paymentStatus
+            && incoming().released == false
+            && !('handoverPin' in incoming())
+            && incoming().shippedAt == request.time
+            && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'shippedAt', 'updatedAt'])
+          )
+          // 6. Seller completes campus handover with matching 4-digit PIN & marks listing sold
+          || (
+            request.auth.uid == existing().sellerId
+            && existing().status in ['pending_payment', 'paid', 'shipped']
+            && existing().paymentStatus in ['pay_on_meetup', 'verified']
+            && incoming().status == 'completed'
+            && incoming().paymentStatus == 'verified'
+            && incoming().released == true
+            && incoming().completedAt == request.time
+            && incoming().releasedAt == request.time
+            && 'handoverPin' in incoming()
+            && incoming().handoverPin is string
+            && incoming().handoverPin.matches('^[0-9]{4}$')
+            && exists(/databases/$(database)/documents/orders/$(orderId)/secrets/handover)
+            && get(/databases/$(database)/documents/orders/$(orderId)/secrets/handover).data.handoverPin == incoming().handoverPin
+            && (!exists(/databases/$(database)/documents/listings/$(existing().listingId))
+                || getAfter(/databases/$(database)/documents/listings/$(existing().listingId)).data.status == 'sold')
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'status', 'paymentStatus', 'handoverPin', 'released', 'completedAt', 'releasedAt', 'updatedAt'
+            ])
+          )
+          // 7. Seller cancels pending order
+          || (
+            request.auth.uid == existing().sellerId
+            && existing().status in ['pending_payment', 'payment_submitted']
+            && incoming().status == 'cancelled'
+            && incoming().paymentStatus == existing().paymentStatus
+            && incoming().released == false
+            && incoming().cancelledAt == request.time
+            && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'cancelledAt', 'updatedAt'])
+          )
+        );
+
+      allow delete: if false;
+
+      match /secrets/{secretId} {
+        allow get: if isValidId(orderId) && isValidId(secretId)
+          && secretId == 'handover'
+          && isVerifiedUser()
+          && (request.auth.uid == existing().buyerId || isAdmin());
+
+        allow list: if false;
+
+        allow create: if isValidId(orderId) && isValidId(secretId)
+          && secretId == 'handover'
+          && isVerifiedUser()
+          && !isBannedUser()
+          && isValidHandoverSecret(incoming())
+          && incoming().orderId == orderId
+          && incoming().buyerId == request.auth.uid
+          && incoming().createdAt == request.time
+          && existsAfter(/databases/$(database)/documents/orders/$(orderId))
+          && getAfter(/databases/$(database)/documents/orders/$(orderId)).data.buyerId == request.auth.uid
+          && getAfter(/databases/$(database)/documents/orders/$(orderId)).data.sellerId == incoming().sellerId;
+
+        allow update, delete: if false;
+      }
+    }
+
+    // --- Notifications (Created/deleted only by Cloud Functions; recipient can mark read) ---
+    match /notifications/{notificationId} {
+      allow get: if isValidId(notificationId)
+        && isVerifiedUser()
+        && (existing().userId == request.auth.uid || isAdmin());
+
+      allow list: if isVerifiedUser()
+        && (resource.data.userId == request.auth.uid || isAdmin());
+
+      allow create, delete: if false;
+
+      allow update: if isValidId(notificationId)
+        && isVerifiedUser()
+        && isValidNotification(incoming())
+        && existing().userId == request.auth.uid
+        && existing().read == false
+        && incoming().read == true
+        && incoming().readAt == request.time
+        && incoming().id == existing().id
+        && incoming().userId == existing().userId
+        && incoming().orderId == existing().orderId
+        && incoming().listingId == existing().listingId
+        && incoming().eventType == existing().eventType
+        && incoming().recipientRole == existing().recipientRole
+        && incoming().title == existing().title
+        && incoming().body == existing().body
+        && incoming().createdAt == existing().createdAt
+        && incoming().diff(existing()).affectedKeys().hasOnly(['read', 'readAt']);
     }
   }
 }

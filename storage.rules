@@ -12,7 +12,7 @@ service firebase.storage {
         && request.auth.token.email_verified == true;
     }
 
-    function isValidListingId(id) {
+    function isValidId(id) {
       return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
     }
 
@@ -21,7 +21,22 @@ service firebase.storage {
       allow read: if isVerifiedUser();
       allow create, update: if isVerifiedUser()
         && request.auth.uid == userId
-        && isValidListingId(listingId)
+        && isValidId(listingId)
+        && fileName.size() >= 1 && fileName.size() <= 180
+        && request.resource != null
+        && request.resource.size > 0
+        && request.resource.size <= 5 * 1024 * 1024
+        && request.resource.contentType.matches('image/(jpeg|png|webp)');
+      allow delete: if isVerifiedUser()
+        && request.auth.uid == userId;
+    }
+
+    // Manual payment receipt proofs: uploaded strictly by the verified buyer
+    match /receipts/{userId}/{orderId}/{fileName} {
+      allow read: if isVerifiedUser();
+      allow create, update: if isVerifiedUser()
+        && request.auth.uid == userId
+        && isValidId(orderId)
         && fileName.size() >= 1 && fileName.size() <= 180
         && request.resource != null
         && request.resource.size > 0

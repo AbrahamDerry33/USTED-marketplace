@@ -21,7 +21,7 @@ export class ErrorBoundary extends React.Component<
       if (parsed && parsed.error) {
         displayMessage =
           parsed.error.includes('Missing or insufficient permissions')
-            ? 'You do not have permission to perform this action. Verify your school email and try again.'
+            ? 'You do not have permission to perform this action. Verify your email and try again.'
             : parsed.error;
       }
     } catch {

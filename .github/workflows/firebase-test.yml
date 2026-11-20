@@ -1,0 +1,114 @@
+# Runs automated tests, type checks, security-rules linting, and build verification
+# on every push and pull request before allowing Firebase Hosting deployment.
+#
+# Shared team setup:
+# 1. Add the `Run Tests & Pre-Deployment Checks` job as a required status check
+#    in GitHub branch protection rules for `main`.
+# 2. Add the `FIREBASE_SERVICE_ACCOUNT` repository secret to enable automated
+#    deployments after all tests pass.
+
+name: Firebase CI - Test & Deploy Gate
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' && github.ref != 'refs/heads/master' }}
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Run Tests & Pre-Deployment Checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Cache npm dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-npm-${{ hashFiles('package.json', 'package-lock.json', 'bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-npm-
+
+      - name: Install dependencies
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci
+          else
+            npm install
+          fi
+
+      - name: Type-check TypeScript
+        run: npm run lint
+
+      - name: Lint Firestore security rules
+        run: npm run lint:rules
+
+      - name: Run Vitest test suite
+        run: npm test
+
+      - name: Verify production build
+        run: npm run build
+
+      - name: Upload tested production build
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-build
+          path: dist
+          retention-days: 1
+
+  deploy:
+    name: Deploy to Firebase Hosting
+    needs: test
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      checks: write
+    steps:
+      - name: Check Firebase deployment credentials
+        id: creds
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          if [ -n "$FIREBASE_SERVICE_ACCOUNT" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "All tests passed. Skipping Firebase deployment because the FIREBASE_SERVICE_ACCOUNT secret is not configured." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Checkout repository
+        if: steps.creds.outputs.configured == 'true'
+        uses: actions/checkout@v4
+
+      - name: Download tested production build
+        if: steps.creds.outputs.configured == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: dist-build
+          path: dist
+
+      - name: Deploy to Firebase Hosting live channel
+        if: steps.creds.outputs.configured == 'true'
+        uses: FirebaseExtended/action-hosting-deploy@v0
+        with:
+          repoToken: ${{ secrets.GITHUB_TOKEN }}
+          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          channelId: live
+          projectId: ${{ vars.FIREBASE_PROJECT_ID || 'infinite-mercury-wbcxw' }}

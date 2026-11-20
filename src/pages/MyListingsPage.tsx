@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Edit3, ImageOff, Plus, Trash2 } from 'lucide-react';
+import { Edit3, ImageOff, Plus, QrCode, Trash2 } from 'lucide-react';
+import { SellerDashboard } from '../components/SellerDashboard';
 import {
   CATEGORY_LABEL_MAP,
   LISTING_STATUS_LABELS,
@@ -8,13 +9,17 @@ import {
 import { useAuth } from '../context/AuthContext';
 import { formatGhs } from '../lib/money';
 import { subscribeMyListings, updateListingStatus } from '../services/listingsService';
-import type { Listing, ListingStatus } from '../types/marketplace';
+import { subscribeSellerOrders } from '../services/ordersService';
+import type { Listing, ListingStatus, Order } from '../types/marketplace';
 
 export function MyListingsPage() {
   const { user } = useAuth();
   const [listings, setListings] = useState<Listing[]>([]);
+  const [sellerOrders, setSellerOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
+  const [ordersLoading, setOrdersLoading] = useState(true);
   const [error, setError] = useState('');
+  const [ordersError, setOrdersError] = useState('');
   const [statusFilter, setStatusFilter] = useState<ListingStatus | 'all'>('all');
   const [pendingRemoveId, setPendingRemoveId] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -22,8 +27,11 @@ export function MyListingsPage() {
   useEffect(() => {
     if (!user) return;
     setLoading(true);
+    setOrdersLoading(true);
     setError('');
-    const unsubscribe = subscribeMyListings(
+    setOrdersError('');
+
+    const unsubscribeListings = subscribeMyListings(
       user.uid,
       (items) => {
         setListings(items);
@@ -34,7 +42,23 @@ export function MyListingsPage() {
         setLoading(false);
       }
     );
-    return () => unsubscribe();
+
+    const unsubscribeOrders = subscribeSellerOrders(
+      user.uid,
+      (orders) => {
+        setSellerOrders(orders);
+        setOrdersLoading(false);
+      },
+      () => {
+        setOrdersError('Unable to load your weekly sales performance right now.');
+        setOrdersLoading(false);
+      }
+    );
+
+    return () => {
+      unsubscribeListings();
+      unsubscribeOrders();
+    };
   }, [user]);
 
   const filtered = useMemo(() => {
@@ -56,12 +80,12 @@ export function MyListingsPage() {
   };
 
   return (
-    <main className="max-w-5xl mx-auto px-4 sm:px-6 py-6 sm:py-10 space-y-6">
+    <main className="max-w-5xl mx-auto px-4 sm:px-6 py-6 sm:py-10 space-y-8">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight text-zinc-900">My Listings</h1>
+        <div className="space-y-1">
+          <h1 className="text-2xl font-bold tracking-tight text-zinc-900">Seller Dashboard</h1>
           <p className="text-sm text-zinc-600">
-            Manage your posted items, update availability, or remove sold goods.
+            Track weekly sales performance, manage posted items, and update availability.
           </p>
         </div>
 
@@ -74,31 +98,51 @@ export function MyListingsPage() {
         </Link>
       </div>
 
-      {/* Status Filter Tabs */}
-      <div className="flex items-center gap-1.5 overflow-x-auto pb-1" role="tablist">
-        {(['all', 'active', 'reserved', 'sold', 'removed'] as const).map((tab) => (
-          <button
-            key={tab}
-            type="button"
-            role="tab"
-            aria-selected={statusFilter === tab}
-            onClick={() => setStatusFilter(tab)}
-            className={`px-3 py-1.5 text-xs font-medium rounded-lg whitespace-nowrap shrink-0 transition-colors ${
-              statusFilter === tab
-                ? 'bg-emerald-900 text-white'
-                : 'bg-stone-200/70 text-zinc-700 hover:bg-stone-300/70'
-            }`}
-          >
-            {tab === 'all' ? 'All' : LISTING_STATUS_LABELS[tab]}
-          </button>
-        ))}
-      </div>
+      {/* Weekly Sales vs. Orders Analytics */}
+      <SellerDashboard
+        orders={sellerOrders}
+        loading={ordersLoading}
+        error={ordersError}
+      />
 
-      {error && (
-        <p className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-4 py-3" role="alert">
-          {error}
-        </p>
-      )}
+      {/* Listings Management Section */}
+      <section aria-labelledby="my-listings-heading" className="space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+          <div className="space-y-0.5">
+            <h2 id="my-listings-heading" className="text-lg font-semibold text-zinc-900">
+              My Listings
+            </h2>
+            <p className="text-xs text-zinc-500 tabular-nums">
+              {listings.length} total {listings.length === 1 ? 'listing' : 'listings'}
+            </p>
+          </div>
+
+          {/* Status Filter Tabs */}
+          <div className="flex items-center gap-1.5 overflow-x-auto pb-1" role="tablist">
+            {(['all', 'active', 'reserved', 'sold', 'removed'] as const).map((tab) => (
+              <button
+                key={tab}
+                type="button"
+                role="tab"
+                aria-selected={statusFilter === tab}
+                onClick={() => setStatusFilter(tab)}
+                className={`px-3 py-1.5 text-xs font-medium rounded-lg whitespace-nowrap shrink-0 transition-colors ${
+                  statusFilter === tab
+                    ? 'bg-emerald-900 text-white'
+                    : 'bg-stone-200/70 text-zinc-700 hover:bg-stone-300/70'
+                }`}
+              >
+                {tab === 'all' ? 'All' : LISTING_STATUS_LABELS[tab]}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {error && (
+          <p className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-4 py-3" role="alert">
+            {error}
+          </p>
+        )}
 
       {loading ? (
         <div className="space-y-3">
@@ -189,6 +233,14 @@ export function MyListingsPage() {
                     </button>
                   )}
                   <Link
+                    to={`/listings/${item.id}/flyer`}
+                    aria-label={`Print QR code flyer for ${item.title}`}
+                    className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-emerald-950 bg-emerald-50 hover:bg-emerald-100 border border-emerald-900/20 rounded-lg transition-colors whitespace-nowrap focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-900"
+                  >
+                    <QrCode className="w-3.5 h-3.5" aria-hidden="true" />
+                    QR Flyer
+                  </Link>
+                  <Link
                     to={`/listings/${item.id}/edit`}
                     className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-zinc-800 bg-stone-100 hover:bg-stone-200 rounded-lg transition-colors"
                   >
@@ -229,6 +281,7 @@ export function MyListingsPage() {
           ))}
         </div>
       )}
+      </section>
     </main>
   );
 }
